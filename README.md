@@ -65,4 +65,4 @@ hw3-mdp-learning/  # Value/Policy Iteration, Monte Carlo, ID3
 
 Coursework for Introduction to Artificial Intelligence (236501) at the Technion, completed with a partner. The game environment, simulator, and environment setup code were provided by the course staff.
 
-> If you're currently taking this course, please follow your course's academic integrity policy.
+

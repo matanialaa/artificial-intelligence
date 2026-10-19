@@ -1,0 +1,497 @@
+import numpy as np
+from HaifaEnv import HaifaEnv
+from typing import List, Tuple
+import heapdict
+import math
+
+from collections import deque
+
+class Node:
+    def __init__(self, state, parent=None, action=None, path_cost=0):
+        self.state = state
+        self.parent = parent
+        self.action = action
+        self.path_cost = path_cost
+
+    def solution(self):
+        """Return the sequence of actions to reach this node."""
+        actions = []
+        node = self
+        while node.parent is not None:
+            actions.append(node.action)
+            node = node.parent
+        actions.reverse()
+        return actions
+
+    def path(self):
+        """Return the sequence of states from the root to this node."""
+        node, path_back = self, []
+        while node:
+            path_back.append(node.state)
+            node = node.parent
+        path_back.reverse()
+        return path_back
+
+
+
+class BFSGAgent:
+    def __init__(self):
+        pass
+
+    def search(self, env) -> Tuple[List[int], int, int]:
+        """
+        Performs Breadth-First Search – Graph version.
+        Returns:
+            actions : list of action integers (solution path only)
+            cost    : total path cost (integer)
+            expanded: number of expanded nodes
+        """
+
+        # -------------------------
+        # Initialize BFS
+        # -------------------------
+
+        # Get the initial state from the environment
+        start_state = env.get_initial_state()
+
+        # Create the root node (no parent, no action, cost = 0)
+        start_node = Node(start_state)
+
+        # If the initial state is already a goal → immediate solution
+        if env.is_final_state(start_state):
+            return [], 0, 0
+
+        # OPEN = queue for BFS frontier
+        OPEN = deque([start_node])
+
+        # CLOSE = set of visited states (graph version)
+        CLOSE = set()
+
+        # Expanded counter: number of nodes whose successors we examine
+        expanded = 0
+
+        # -------------------------
+        # BFS main loop
+        # -------------------------
+        while OPEN:
+
+            # Pop the shallowest node (FIFO)
+            node = OPEN.popleft()
+
+            # Mark the state as visited
+            CLOSE.add(node.state)
+
+            # We are about to expand this node → increment expansion counter
+            expanded += 1
+
+            # Get successors of the state:
+            # successors[action] = (new_state, cost, terminated)
+            successors = env.succ(node.state)
+
+            # Explore each possible action
+            for action, (new_state, step_cost, terminated) in successors.items():
+
+                # If the move leads to an invalid path (hole), skip it
+                if new_state is None:
+                    continue
+
+                # Create a child node
+                child = Node(new_state, parent=node, action=action)
+
+                # GRAPH-SEARCH check:
+                # Skip child if its state is already visited
+                if new_state in CLOSE:
+                    continue
+
+                # Skip if already in OPEN (prevents duplicates in frontier)
+                if any(n.state == new_state for n in OPEN):
+                    continue
+
+                # -------------------------
+                # Check if child is a goal
+                # -------------------------
+                if env.is_final_state(new_state):
+
+                    # Extract the sequence of actions leading to this child
+                    actions = child.solution()
+
+                    # Compute total cost by replaying the actions from start
+                    total_cost = 0
+                    current_state = start_state
+
+                    for a in actions:
+                        next_state, c, _ = env.succ(current_state)[a]
+                        total_cost += c
+                        current_state = next_state
+
+                    # Return solution tuple
+                    return actions, total_cost, expanded
+
+                # If not goal → add child to frontier
+                OPEN.append(child)
+
+        # If loop ends → no solution found
+        return [], float('inf'), expanded
+
+
+
+
+
+
+class GreedyAgent:
+
+    def __init__(self):
+        self.C_passway = 100   # fixed constant from assignment
+
+    # Manhattan distance(s, g)
+    def h_manhattan(self, env, s, g):
+        r1, c1 = env.to_row_col(s)
+        r2, c2 = env.to_row_col(g)
+        return abs(r1 - r2) + abs(c1 - c2)
+
+    # h_HAIFA(s)
+    def h_HAIFA(self, env, s):
+        goals = env.get_goal_states()
+        man = min(self.h_manhattan(env, s, g) for g in goals)
+        return min(man, self.C_passway)
+
+    # Greedy Best-First Search
+    # Returns: (actions, cost, expanded)
+    def search(self, env) -> Tuple[List[int], float, int]:
+
+        start = env.get_initial_state()
+        goals = set(env.get_goal_states())
+
+        OPEN = heapdict.heapdict()
+        CLOSED = set()
+        parent = {start: None}  # store (parent_state, action)
+
+        # push starting node
+        OPEN[start] = (self.h_HAIFA(env, start), start)
+
+        expanded = 0
+
+        while OPEN:
+            # pop the state with lowest (h, s)
+            s, _ = OPEN.popitem()
+            expanded += 1
+            CLOSED.add(s)
+
+            # goal test
+            if s in goals:
+                # reconstruct actions only
+                actions = []
+                curr = s
+                while curr is not None:
+                    info = parent[curr]
+                    if info is None:
+                        break
+                    prev_state, action = info
+                    actions.append(action)
+                    curr = prev_state
+                actions.reverse()
+                # compute total cost
+                total_cost = 0
+                state = start
+                for a in actions:
+                    ns, cost, _ = env.succ(state)[a]
+                    total_cost += cost
+                    state = ns
+
+                return actions, total_cost, expanded
+
+            # expand successors
+            for action, (ns, cost, terminated) in env.succ(s).items():
+                if ns is None:       # hitting wall or hole
+                    continue
+                if ns in CLOSED:
+                    continue
+                if ns not in OPEN:
+                    parent[ns] = (s, action)  # store parent state and action
+                    h_val = self.h_HAIFA(env, ns)
+                    OPEN[ns] = (h_val, ns)
+
+        # no solution
+        return [], math.inf, expanded
+
+
+
+
+from typing import List, Tuple
+
+
+class AStarEpsilonNode:
+    def __init__(self, state, parent=None, action=None, g=0.0, f=0.0, h_focal=0.0, insert_order=0):
+        self.state = state
+        self.parent = parent
+        self.action = action
+        self.g = g
+        self.f = f
+        self.h_focal = h_focal
+        self.insert_order = insert_order
+
+class AStarEpsilonAgent:
+    def __init__(self, C_passway: float = 100.0):
+        self.C_passway = C_passway
+
+    # Manhattan distance
+    def h_manhattan(self, env, s, g):
+        r1, c1 = env.to_row_col(s)
+        r2, c2 = env.to_row_col(g)
+        return abs(r1 - r2) + abs(c1 - c2)
+
+    # HAIFA heuristic
+    def h_HAIFA(self, env, s):
+        goals = env.get_goal_states()
+        man = min(self.h_manhattan(env, s, g) for g in goals)
+        return min(man, self.C_passway)
+
+    # Focal heuristic
+    def h_focal(self, env, s):
+        return self.h_HAIFA(env, s)
+
+    def reconstruct_path(self, node: AStarEpsilonNode) -> List[int]:
+        actions = []
+        while node.parent is not None:
+            actions.append(node.action)
+            node = node.parent
+        actions.reverse()
+        return actions
+
+    def search(self, env, epsilon: float = 0.1) -> Tuple[List[int], float, int]:
+        start = env.get_initial_state()
+        goals = set(env.get_goal_states())
+
+        OPEN = heapdict.heapdict()   # state -> (f, state)
+        FOCAL = heapdict.heapdict()  # state -> (h_focal, f, state)
+        node_info = {}               # state -> node
+        CLOSED = set()
+        expanded = 0
+        insert_counter = 0
+
+        # initialize start node
+        h0 = self.h_HAIFA(env, start)
+        start_node = AStarEpsilonNode(start, parent=None, action=None, g=0.0, f=h0, h_focal=h0, insert_order=insert_counter)
+        OPEN[start] = (h0, start)
+        node_info[start] = start_node
+        insert_counter += 1
+
+        while OPEN:
+            # determine f_min
+            f_min = min(f for f, _ in OPEN.values())
+
+            # update FOCAL: nodes with f <= (1 + epsilon) * f_min
+            FOCAL.clear()
+            for s, (f_val, _) in OPEN.items():
+                if f_val <= (1 + epsilon) * f_min:
+                    node_s = node_info[s]
+                    FOCAL[s] = (node_s.h_focal, f_val, s)
+
+            # pop the best node from FOCAL
+            chosen_state = FOCAL.popitem()[0]
+            node_n = node_info[chosen_state]
+
+            # remove from OPEN as well
+            if chosen_state in OPEN:
+                del OPEN[chosen_state]
+
+            if chosen_state in CLOSED:
+                continue
+
+            CLOSED.add(chosen_state)
+            expanded += 1
+
+            if chosen_state in goals:
+                return self.reconstruct_path(node_n), node_n.g, expanded
+
+            # expand successors
+            for action, (succ, cost, terminated) in env.succ(chosen_state).items():
+                if succ is None:
+                    continue
+
+                g_new = node_n.g + cost
+                f_new = g_new + self.h_HAIFA(env, succ)
+                h_focal_new = self.h_focal(env, succ)
+
+                existing = node_info.get(succ)
+
+                if existing is None:
+                    # new node
+                    node_succ = AStarEpsilonNode(
+                        succ,
+                        parent=node_n,
+                        action=action,
+                        g=g_new,
+                        f=f_new,
+                        h_focal=h_focal_new,
+                        insert_order=insert_counter
+                    )
+                    node_info[succ] = node_succ
+                    OPEN[succ] = (f_new, succ)
+                    insert_counter += 1
+
+                elif succ in OPEN:
+                    # update if better
+                    if g_new < existing.g:
+                        existing.parent = node_n
+                        existing.action = action
+                        existing.g = g_new
+                        existing.f = f_new
+                        existing.h_focal = h_focal_new
+                        existing.insert_order = insert_counter
+                        insert_counter += 1
+                        OPEN[succ] = (f_new, succ)
+
+                elif succ in CLOSED:
+                    # reopen if better
+                    if g_new < existing.g:
+                        existing.parent = node_n
+                        existing.action = action
+                        existing.g = g_new
+                        existing.f = f_new
+                        existing.h_focal = h_focal_new
+                        existing.insert_order = insert_counter
+                        insert_counter += 1
+                        OPEN[succ] = (f_new, succ)
+                        CLOSED.remove(succ)
+
+        return [], float('inf'), expanded
+
+
+
+class AStarNode:
+    def __init__(self, state, parent=None, action=None, g=0, f=0):
+        self.state = state
+        self.parent = parent
+        self.action = action
+        self.g = g
+        self.f = f
+
+
+
+class AStarAgent():
+    def __init__(self):
+        self.C_passway = 100  # Haifa constant
+
+    # Manhattan distance
+    def h_manhattan(self, env, s, g):
+        r1, c1 = env.to_row_col(s)
+        r2, c2 = env.to_row_col(g)
+        return abs(r1 - r2) + abs(c1 - c2)
+
+    # HAIFA heuristic
+    def h_HAIFA(self, env, s):
+        goals = env.get_goal_states()
+        man = min(self.h_manhattan(env, s, g) for g in goals)
+        return min(man, self.C_passway)
+
+    def reconstruct_path(self, node):
+        actions = []
+        while node['parent'] is not None:
+            actions.append(node['action'])
+            node = node['parent']
+        actions.reverse()
+        return actions
+
+    def search(self, env, heuristic=None, verbose=False):
+        start = env.get_initial_state()
+        goals = env.get_goal_states()
+        h = heuristic or (lambda e, s: 0)
+
+        OPEN = heapdict.heapdict()  # key: state, value: f
+        node_info = {}
+
+        start_node = {
+            'state': start, 'parent': None, 'action': None,
+            'g': 0, 'f': h(env, start)
+        }
+
+        OPEN[start] = start_node['f']
+        node_info[start] = start_node
+
+        CLOSED = set()
+        expanded = 0
+
+        while OPEN:
+            state_n, _ = OPEN.popitem()
+            node_n = node_info[state_n]
+
+            # If it was already expanded, skip
+            if state_n in CLOSED:
+                continue
+
+            CLOSED.add(state_n)
+            expanded += 1
+
+            if state_n in goals:
+                actions = self.reconstruct_path(node_n)
+                return actions, node_n['g'], expanded
+
+            for action, (succ, cost, terminated) in env.succ(state_n).items():
+                if succ is None:
+                    continue
+
+                g_new = node_n['g'] + cost
+                f_new = g_new + h(env, succ)
+
+                # ------------------------------------------
+                # Case 1: successor never seen before
+                # ------------------------------------------
+                if succ not in OPEN and succ not in CLOSED:
+                    node_succ = {
+                        'state': succ, 'parent': node_n, 'action': action,
+                        'g': g_new, 'f': f_new
+                    }
+                    OPEN[succ] = f_new
+                    node_info[succ] = node_succ
+                    continue
+
+                existing = node_info[succ]
+
+                # ------------------------------------------
+                # Case 2: successor in OPEN → update if better
+                # ------------------------------------------
+                if succ in OPEN:
+                    if f_new < existing['f']:
+                        node_succ = {
+                            'state': succ, 'parent': node_n, 'action': action,
+                            'g': g_new, 'f': f_new
+                        }
+                        node_info[succ] = node_succ
+                        OPEN.updateitem(succ, f_new)
+                    continue
+
+                # ------------------------------------------
+                # Case 3: successor in CLOSED → reopen if better
+                # (for inconsistent heuristics)
+                # ------------------------------------------
+                if succ in CLOSED:
+                    if f_new < existing['f']:
+                        CLOSED.remove(succ)
+                        node_succ = {
+                            'state': succ, 'parent': node_n, 'action': action,
+                            'g': g_new, 'f': f_new
+                        }
+                        node_info[succ] = node_succ
+                        OPEN[succ] = f_new  # reinsert into OPEN
+                # ------------------------------------------
+
+        return None, float('inf'), expanded
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
